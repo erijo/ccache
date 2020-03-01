@@ -48,6 +48,7 @@ non_third_party_headers_without_cpp = \
     src/Stat.hpp \
     src/StdMakeUnique.hpp \
     src/ThreadPool.hpp \
+    src/avx2config.hpp \
     src/exceptions.hpp \
     src/macroskip.hpp \
     src/system.hpp \

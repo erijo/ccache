@@ -18,7 +18,7 @@
 
 #include "Buffer.hpp"
 
-#include "config.h"
+#include "avx2config.hpp"
 #include "legacy_util.hpp"
 
 #include <cassert>
