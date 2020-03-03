@@ -549,20 +549,16 @@ do_remember_include_file(Context& ctx,
 
   if (ctx.config.direct_mode()) {
     if (!is_pch) { // else: the file has already been hashed.
-      char* source = nullptr;
-      size_t size;
+      Buffer buffer;
       if (st.size() > 0) {
-        if (!read_file(path.c_str(), st.size(), &source, &size)) {
+        buffer = read_file(path.c_str(), st.size());
+        if (!buffer) {
           return false;
         }
-      } else {
-        source = x_strdup("");
-        size = 0;
       }
 
       int result =
-        hash_source_code_string(ctx.config, fhash, source, size, path.c_str());
-      free(source);
+        hash_source_code_string(ctx.config, fhash, buffer, path.c_str());
       if (result & HASH_SOURCE_CODE_ERROR
           || result & HASH_SOURCE_CODE_FOUND_TIME) {
         return false;
@@ -679,9 +675,8 @@ process_preprocessed_file(Context& ctx,
                           const char* path,
                           bool pump)
 {
-  char* data;
-  size_t size;
-  if (!read_file(path, 0, &data, &size)) {
+  auto buffer = read_file(path);
+  if (!buffer) {
     return false;
   }
 
@@ -701,9 +696,9 @@ process_preprocessed_file(Context& ctx,
   }
 
   // Bytes between p and q are pending to be hashed.
-  char* p = data;
-  char* q = data;
-  char* end = data + size;
+  char* p = buffer.char_buffer();
+  char* q = p;
+  char* end = p + buffer.size();
 
   // There must be at least 7 characters (# 1 "x") left to potentially find an
   // include file path.
@@ -737,7 +732,8 @@ process_preprocessed_file(Context& ctx,
             // HP/AIX:
             || (q[1] == 'l' && q[2] == 'i' && q[3] == 'n' && q[4] == 'e'
                 && q[5] == ' '))
-        && (q == data || q[-1] == '\n')) {
+        // q[-1] is always ok (see Buffer documentation)
+        && q[-1] == '\n') {
       // Workarounds for preprocessor linemarker bugs in GCC version 6.
       if (q[2] == '3') {
         if (str_startswith(q, "# 31 \"<command-line>\"\n")) {
@@ -772,7 +768,6 @@ process_preprocessed_file(Context& ctx,
       q++;
       if (q >= end) {
         cc_log("Failed to parse included file path");
-        free(data);
         return false;
       }
       // q points to the beginning of an include file path
@@ -849,7 +844,6 @@ process_preprocessed_file(Context& ctx,
   }
 
   hash_string_buffer(hash, p, (end - p));
-  free(data);
 
   // Explicitly check the .gch/.pch/.pth file as Clang does not include any
   // mention of it in the preprocessed output.

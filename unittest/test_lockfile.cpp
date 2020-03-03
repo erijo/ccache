@@ -48,7 +48,7 @@ TEST(release_should_delete_file)
 
 TEST(lock_breaking)
 {
-  char* p;
+  const char* p;
 
 #if defined(_WIN32) || defined(__CYGWIN__)
   create_file("test.lock", "foo");
@@ -60,15 +60,15 @@ TEST(lock_breaking)
   CHECK(lockfile_acquire("test", 1000));
 
 #if defined(_WIN32) || defined(__CYGWIN__)
-  p = read_text_file("test.lock", 0);
+  auto buffer = read_file("test.lock");
+  p = buffer.char_buffer();
 #else
-  p = x_strdup(Util::read_link("test.lock").c_str());
+  auto target = Util::read_link("test.lock");
+  p = target.c_str();
 #endif
   CHECK(p);
   CHECK(!str_eq(p, "foo"));
   CHECK(!path_exists("test.lock.lock"));
-
-  free(p);
 }
 
 #if !defined(_WIN32) && !defined(__CYGWIN__)

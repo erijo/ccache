@@ -23,6 +23,19 @@
 #include "framework.hpp"
 #include "util.hpp"
 
+namespace {
+
+int
+check_for_temporal_macros(const char* str, size_t len)
+{
+  Buffer buffer(len);
+  memcpy(buffer.char_buffer(), str, len);
+  buffer.set_size(len);
+  return check_for_temporal_macros(buffer);
+}
+
+} // namespace
+
 TEST_SUITE(hashutil)
 
 TEST(hash_command_output_simple)

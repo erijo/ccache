@@ -53,10 +53,11 @@ args_init_from_string(const char* command)
 struct args*
 args_init_from_gcc_atfile(const char* filename)
 {
-  char* argtext;
-  if (!(argtext = read_text_file(filename, 0))) {
+  auto buffer = read_file(filename);
+  if (!buffer) {
     return nullptr;
   }
+  char* argtext = buffer.char_buffer();
 
   struct args* args = args_init(0, nullptr);
   char* pos = argtext;
@@ -123,7 +124,6 @@ args_init_from_gcc_atfile(const char* filename)
 
 out:
   free(argbuf);
-  free(argtext);
   return args;
 }
 

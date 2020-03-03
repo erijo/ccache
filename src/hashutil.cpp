@@ -57,23 +57,25 @@ hash_from_int(int i)
 
 // Returns one of HASH_SOURCE_CODE_FOUND_DATE, HASH_SOURCE_CODE_FOUND_TIME or
 // HASH_SOURCE_CODE_FOUND_TIMESTAMP if "_DATE__", "_TIME__" or "_TIMESTAMP__"
-// starts at str[pos].
+// starts at str.
 //
-// Pre-condition: str[pos - 1] == '_'
+// Pre-condition: str[-1] == '_'
+//                str[-2] and str[len] are valid memory accesses
 static int
-check_for_temporal_macros_helper(const char* str, size_t len, size_t pos)
+check_for_temporal_macros_helper(const char* str, size_t len)
 {
-  if (pos + 7 > len) {
+  size_t macro_len = 7;
+
+  if (len < macro_len) {
     return 0;
   }
 
   int found = 0;
-  int macro_len = 7;
-  if (memcmp(str + pos, "_DATE__", 7) == 0) {
+  if (memcmp(str, "_DATE__", macro_len) == 0) {
     found = HASH_SOURCE_CODE_FOUND_DATE;
-  } else if (memcmp(str + pos, "_TIME__", 7) == 0) {
+  } else if (memcmp(str, "_TIME__", macro_len) == 0) {
     found = HASH_SOURCE_CODE_FOUND_TIME;
-  } else if (pos + 12 <= len && memcmp(str + pos, "_TIMESTAMP__", 12) == 0) {
+  } else if (len >= 12 && memcmp(str, "_TIMESTAMP__", 12) == 0) {
     found = HASH_SOURCE_CODE_FOUND_TIMESTAMP;
     macro_len = 12;
   } else {
@@ -82,9 +84,8 @@ check_for_temporal_macros_helper(const char* str, size_t len, size_t pos)
 
   // Check char before and after macro to verify that the found macro isn't
   // part of another identifier.
-  if ((pos == 1 || (str[pos - 2] != '_' && !isalnum(str[pos - 2])))
-      && (pos + macro_len == len
-          || (str[pos + macro_len] != '_' && !isalnum(str[pos + macro_len])))) {
+  if (str[-2] != '_' && !isalnum(str[-2]) && str[macro_len] != '_'
+      && !isalnum(str[macro_len])) {
     return found;
   }
 
@@ -92,40 +93,41 @@ check_for_temporal_macros_helper(const char* str, size_t len, size_t pos)
 }
 
 static int
-check_for_temporal_macros_bmh(const char* str, size_t len)
+check_for_temporal_macros_bmh(const Buffer& buffer)
 {
   int result = 0;
+
+  auto start = buffer.char_buffer();
 
   // We're using the Boyer-Moore-Horspool algorithm, which searches starting
   // from the *end* of the needle. Our needles are 8 characters long, so i
   // starts at 7.
-  size_t i = 7;
-
-  while (i < len) {
-    // Check whether the substring ending at str[i] has the form "_....E..". On
+  //
+  // macro_skip tells us how far we can skip forward upon seeing a particular
+  // character at the end of a substring.
+  for (size_t i = 7; i < buffer.size(); i += macro_skip[(uint8_t)start[i]]) {
+    auto end = start + i;
+    // Check whether the substring ending at end has the form "_....E..". On
     // the assumption that 'E' is less common in source than '_', we check
-    // str[i-2] first.
-    if (str[i - 2] == 'E' && str[i - 7] == '_') {
-      result |= check_for_temporal_macros_helper(str, len, i - 6);
+    // end[-2] first.
+    if (end[-2] == 'E' && end[-7] == '_') {
+      const auto len = buffer.size() - i;
+      result |= check_for_temporal_macros_helper(end - 6, len + 6);
     }
-
-    // macro_skip tells us how far we can skip forward upon seeing str[i] at
-    // the end of a substring.
-    i += macro_skip[(uint8_t)str[i]];
   }
 
   return result;
 }
 
 #ifdef HAVE_AVX2
-static int check_for_temporal_macros_avx2(const char* str, size_t len)
+static int check_for_temporal_macros_avx2(const Buffer& buffer)
   __attribute__((target("avx2")));
 
 // The following algorithm, which uses AVX2 instructions to find __DATE__,
 // __TIME__ and __TIMESTAMP__, is heavily inspired by
 // <http://0x80.pl/articles/simd-strfind.html>.
 static int
-check_for_temporal_macros_avx2(const char* str, size_t len)
+check_for_temporal_macros_avx2(const Buffer& buffer)
 {
   int result = 0;
 
@@ -133,15 +135,16 @@ check_for_temporal_macros_avx2(const char* str, size_t len)
   const __m256i first = _mm256_set1_epi8('_');
   const __m256i last = _mm256_set1_epi8('E');
 
-  size_t pos = 0;
-  for (; pos + 5 + 32 <= len; pos += 32) {
+  auto start = buffer.char_buffer();
+  for (size_t i = 0; i + 8 <= buffer.size(); i += 32) {
     // Load 32 bytes from the current position in the input string, with
     // block_last being offset 5 bytes (i.e. the offset of 'E' in all three
     // macros).
+    const auto current = start + i;
     const __m256i block_first =
-      _mm256_loadu_si256(reinterpret_cast<const __m256i*>(str + pos));
+      _mm256_loadu_si256(reinterpret_cast<const __m256i*>(current));
     const __m256i block_last =
-      _mm256_loadu_si256(reinterpret_cast<const __m256i*>(str + pos + 5));
+      _mm256_loadu_si256(reinterpret_cast<const __m256i*>(current + 5));
 
     // For i in 0..31:
     //   eq_X[i] = 0xFF if X[i] == block_X[i] else 0
@@ -152,19 +155,18 @@ check_for_temporal_macros_avx2(const char* str, size_t len)
     // significant bit set.
     uint32_t mask = _mm256_movemask_epi8(_mm256_and_si256(eq_first, eq_last));
 
-    // A bit set in mask now indicates a possible location for a temporal macro.
+    // A bit set in mask now indicates a possible position for a temporal macro.
     while (mask != 0) {
-      // The start position + 1 (as we know the first char is _).
-      const auto start = pos + __builtin_ctz(mask) + 1;
+      // The possible macro position + 1 (as we know the first char is _).
+      const auto pos = __builtin_ctz(mask) + 1;
 
       // Clear the least significant bit set.
       mask = mask & (mask - 1);
 
-      result |= check_for_temporal_macros_helper(str, len, start);
+      const auto len = buffer.size() - i;
+      result |= check_for_temporal_macros_helper(current + pos, len - pos);
     }
   }
-
-  result |= check_for_temporal_macros_bmh(str + pos, len - pos);
 
   return result;
 }
@@ -176,22 +178,21 @@ check_for_temporal_macros_avx2(const char* str, size_t len)
 // HASH_SOURCE_CODE_FOUND_TIME and HASH_SOURCE_CODE_FOUND_TIMESTAMP set
 // appropriately.
 int
-check_for_temporal_macros(const char* str, size_t len)
+check_for_temporal_macros(const Buffer& buffer)
 {
 #ifdef HAVE_AVX2
   if (__builtin_cpu_supports("avx2")) {
-    return check_for_temporal_macros_avx2(str, len);
+    return check_for_temporal_macros_avx2(buffer);
   }
 #endif
-  return check_for_temporal_macros_bmh(str, len);
+  return check_for_temporal_macros_bmh(buffer);
 }
 
 // Hash a string. Returns a bitmask of HASH_SOURCE_CODE_* results.
 int
 hash_source_code_string(const Config& config,
                         struct hash* hash,
-                        const char* str,
-                        size_t len,
+                        const Buffer& buffer,
                         const char* path)
 {
   int result = HASH_SOURCE_CODE_OK;
@@ -199,11 +200,11 @@ hash_source_code_string(const Config& config,
   // Check for __DATE__, __TIME__ and __TIMESTAMP__if the sloppiness
   // configuration tells us we should.
   if (!(config.sloppiness() & SLOPPY_TIME_MACROS)) {
-    result |= check_for_temporal_macros(str, len);
+    result |= check_for_temporal_macros(buffer);
   }
 
   // Hash the source string.
-  hash_string_buffer(hash, str, len);
+  hash_string_buffer(hash, buffer.char_buffer(), buffer.size());
 
   if (result & HASH_SOURCE_CODE_FOUND_DATE) {
     cc_log("Found __DATE__ in %s", path);
@@ -247,8 +248,8 @@ hash_source_code_string(const Config& config,
     }
 
 #ifdef HAVE_ASCTIME_R
-    char buffer[26];
-    auto timestamp = asctime_r(&modified, buffer);
+    char buf[26];
+    auto timestamp = asctime_r(&modified, buf);
 #else
     auto timestamp = asctime(&modified);
 #endif
@@ -276,14 +277,11 @@ hash_source_code_file(const Config& config,
       return HASH_SOURCE_CODE_ERROR;
     }
   } else {
-    char* data;
-    size_t size;
-    if (!read_file(path, size_hint, &data, &size)) {
+    auto buffer = read_file(path, size_hint);
+    if (!buffer) {
       return HASH_SOURCE_CODE_ERROR;
     }
-    int result = hash_source_code_string(config, hash, data, size, path);
-    free(data);
-    return result;
+    return hash_source_code_string(config, hash, buffer, path);
   }
 }
 

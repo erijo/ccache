@@ -24,6 +24,7 @@
 
 #include <inttypes.h>
 
+class Buffer;
 class Config;
 struct Context;
 
@@ -35,11 +36,10 @@ unsigned hash_from_int(int i);
 #define HASH_SOURCE_CODE_FOUND_TIME 4
 #define HASH_SOURCE_CODE_FOUND_TIMESTAMP 8
 
-int check_for_temporal_macros(const char* str, size_t len);
+int check_for_temporal_macros(const Buffer& buffer);
 int hash_source_code_string(const Config& config,
                             struct hash* hash,
-                            const char* str,
-                            size_t len,
+                            const Buffer& buffer,
                             const char* path);
 int hash_source_code_file(const Config& config,
                           struct hash* hash,

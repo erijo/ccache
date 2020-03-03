@@ -873,10 +873,9 @@ x_try_unlink(const char* path)
   return do_x_unlink(path, false);
 }
 
-// Reads the content of a file. Size hint 0 means no hint. Returns true on
-// success, otherwise false.
-bool
-read_file(const char* path, size_t size_hint, char** data, size_t* size)
+// Reads the content of a file. Size hint 0 means no hint.
+Buffer
+read_file(const char* path, size_t size_hint)
 {
   if (size_hint == 0) {
     size_hint = Stat::stat(path, Stat::OnError::log).size();
@@ -886,24 +885,23 @@ read_file(const char* path, size_t size_hint, char** data, size_t* size)
 
   int fd = open(path, O_RDONLY | O_BINARY);
   if (fd == -1) {
-    return false;
+    return Buffer{};
   }
-  size_t allocated = size_hint;
-  *data = static_cast<char*>(x_malloc(allocated));
+
+  Buffer buffer(size_hint);
   ssize_t ret;
-  size_t pos = 0;
+
   while (true) {
-    if (pos > allocated / 2) {
-      allocated *= 2;
-      *data = static_cast<char*>(x_realloc(*data, allocated));
+    if (buffer.size() > buffer.capacity() / 2) {
+      buffer.set_capacity(buffer.capacity() * 2);
     }
-    const size_t max_read = allocated - pos;
-    ret = read(fd, *data + pos, max_read);
+    const size_t max_read = buffer.capacity() - buffer.size();
+    ret = read(fd, buffer.buffer() + buffer.size(), max_read);
     if (ret == 0 || (ret == -1 && errno != EINTR)) {
       break;
     }
     if (ret > 0) {
-      pos += ret;
+      buffer.set_size(buffer.size() + ret);
       if (static_cast<size_t>(ret) < max_read) {
         break;
       }
@@ -912,29 +910,10 @@ read_file(const char* path, size_t size_hint, char** data, size_t* size)
   close(fd);
   if (ret == -1) {
     cc_log("Failed reading %s", path);
-    free(*data);
-    *data = nullptr;
-    return false;
+    buffer.reset();
   }
 
-  *size = pos;
-  return true;
-}
-
-// Return the content (with NUL termination) of a text file, or NULL on error.
-// Caller frees. Size hint 0 means no hint.
-char*
-read_text_file(const char* path, size_t size_hint)
-{
-  size_t size;
-  char* data;
-  if (read_file(path, size_hint, &data, &size)) {
-    data = static_cast<char*>(x_realloc(data, size + 1));
-    data[size] = '\0';
-    return data;
-  } else {
-    return nullptr;
-  }
+  return buffer;
 }
 
 static bool

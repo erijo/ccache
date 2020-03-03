@@ -20,6 +20,8 @@
 
 #include "system.hpp"
 
+#include "Buffer.hpp"
+
 #include <string>
 
 void fatal(const char* format, ...) ATTR_FORMAT(printf, 1, 2) ATTR_NORETURN;
@@ -62,8 +64,7 @@ int x_rename(const char* oldpath, const char* newpath);
 int tmp_unlink(const char* path);
 int x_unlink(const char* path);
 int x_try_unlink(const char* path);
-bool read_file(const char* path, size_t size_hint, char** data, size_t* size);
-char* read_text_file(const char* path, size_t size_hint);
+Buffer read_file(const char* path, size_t size_hint = 0);
 char* subst_env_in_string(const char* str, char** errmsg);
 void set_cloexec_flag(int fd);
 double time_seconds();
