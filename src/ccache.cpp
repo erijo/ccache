@@ -662,39 +662,12 @@ make_relative_path(const Context& ctx, string_view path)
   return std::string(original_path);
 }
 
-// This function reads and hashes a file. While doing this, it also does these
-// things:
-//
-// - Makes include file paths for which the base directory is a prefix relative
-//   when computing the hash sum.
-// - Stores the paths and hashes of included files in the global variable
-//   g_included_files.
 static bool
-process_preprocessed_file(Context& ctx,
-                          struct hash* hash,
-                          const char* path,
-                          bool pump)
+hash_preprocessed_file(Context& ctx,
+                       struct hash* hash,
+                       Buffer& buffer,
+                       bool pump)
 {
-  auto buffer = read_file(path);
-  if (!buffer) {
-    return false;
-  }
-
-  ctx.ignore_headers = nullptr;
-  ctx.ignore_headers_len = 0;
-  if (!ctx.config.ignore_headers_in_manifest().empty()) {
-    char *header, *p, *q, *saveptr = nullptr;
-    p = x_strdup(ctx.config.ignore_headers_in_manifest().c_str());
-    q = p;
-    while ((header = strtok_r(q, PATH_DELIM, &saveptr))) {
-      ctx.ignore_headers = static_cast<char**>(x_realloc(
-        ctx.ignore_headers, (ctx.ignore_headers_len + 1) * sizeof(char*)));
-      ctx.ignore_headers[ctx.ignore_headers_len++] = x_strdup(header);
-      q = nullptr;
-    }
-    free(p);
-  }
-
   // Bytes between p and q are pending to be hashed.
   char* p = buffer.char_buffer();
   char* q = p;
@@ -844,6 +817,45 @@ process_preprocessed_file(Context& ctx,
   }
 
   hash_string_buffer(hash, p, (end - p));
+  return true;
+}
+
+// This function reads and hashes a file. While doing this, it also does these
+// things:
+//
+// - Makes include file paths for which the base directory is a prefix relative
+//   when computing the hash sum.
+// - Stores the paths and hashes of included files in the global variable
+//   g_included_files.
+static bool
+process_preprocessed_file(Context& ctx,
+                          struct hash* hash,
+                          const char* path,
+                          bool pump)
+{
+  auto buffer = read_file(path);
+  if (!buffer) {
+    return false;
+  }
+
+  ctx.ignore_headers = nullptr;
+  ctx.ignore_headers_len = 0;
+  if (!ctx.config.ignore_headers_in_manifest().empty()) {
+    char *header, *p, *q, *saveptr = nullptr;
+    p = x_strdup(ctx.config.ignore_headers_in_manifest().c_str());
+    q = p;
+    while ((header = strtok_r(q, PATH_DELIM, &saveptr))) {
+      ctx.ignore_headers = static_cast<char**>(x_realloc(
+        ctx.ignore_headers, (ctx.ignore_headers_len + 1) * sizeof(char*)));
+      ctx.ignore_headers[ctx.ignore_headers_len++] = x_strdup(header);
+      q = nullptr;
+    }
+    free(p);
+  }
+
+  if (!hash_preprocessed_file(ctx, hash, buffer, pump)) {
+    return false;
+  }
 
   // Explicitly check the .gch/.pch/.pth file as Clang does not include any
   // mention of it in the preprocessed output.
